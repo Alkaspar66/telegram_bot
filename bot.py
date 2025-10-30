@@ -12,9 +12,6 @@ from telegram.ext import (
     filters,
 )
 
-# ===============================
-# 🔧 Настройки
-# ===============================
 TOKEN = os.getenv("TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
