@@ -21,7 +21,6 @@ WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
 
 app = Flask(__name__)
 telegram_app = Application.builder().token(TOKEN).build()
-
 CSV_FILE = "applications.csv"
 user_states = {}
 
@@ -80,34 +79,35 @@ def webhook():
     print("📩 Webhook получил апдейт:", data)
     update = Update.de_json(data, telegram_app.bot)
 
+    # безопасно передаем в loop телеграма
     asyncio.run_coroutine_threadsafe(
         telegram_app.process_update(update),
         telegram_app.loop,
     )
     return "ok"
 
+@app.route("/")
+def home():
+    return "Bot is alive ✅", 200
+
 # ===============================
 # 🚀 Запуск
 # ===============================
-if __name__ == "__main__":
+async def run_bot():
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.bot.set_webhook(WEBHOOK_URL)
+    print(f"🚀 Webhook установлен: {WEBHOOK_URL}")
+
+def start_flask():
     port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
-    async def run_bot():
-        telegram_app.add_handler(CommandHandler("start", start))
-        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-        await telegram_app.initialize()
-        await telegram_app.start()
-        await telegram_app.bot.set_webhook(WEBHOOK_URL)
-        print(f"🚀 Webhook установлен: {WEBHOOK_URL}")
-
-        # держим бота живым
-        await telegram_app.updater.start_polling()
-
-    def run_flask():
-        app.run(host="0.0.0.0", port=port)
-
-    # Flask в отдельном потоке
-    threading.Thread(target=run_flask).start()
-
-    asyncio.run(run_bot())
+if __name__ == "__main__":
+    # запускаем Telegram в отдельном потоке
+    threading.Thread(target=lambda: asyncio.run(run_bot())).start()
+    # Flask — в основном потоке (Render будет держать этот процесс)
+    start_flask()
