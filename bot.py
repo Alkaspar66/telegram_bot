@@ -1,6 +1,7 @@
 import os
 import csv
 import asyncio
+import threading
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import (
@@ -10,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+
 # ===============================
 # 🔧 Настройки
 # ===============================
@@ -21,12 +23,11 @@ app = Flask(__name__)
 telegram_app = Application.builder().token(TOKEN).build()
 
 CSV_FILE = "applications.csv"
+user_states = {}
 
 # ===============================
 # 🤖 Логика бота
 # ===============================
-user_states = {}
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     user_states[user_id] = {"step": "ask_name"}
@@ -77,35 +78,36 @@ def save_to_csv(name: str, phone: str):
 def webhook():
     data = request.get_json(force=True)
     print("📩 Webhook получил апдейт:", data)
-
     update = Update.de_json(data, telegram_app.bot)
-    try:
-        telegram_app.update_queue.put_nowait(update)
-    except Exception as e:
-        print("⚠️ Ошибка при добавлении update в очередь:", e)
+
+    asyncio.run_coroutine_threadsafe(
+        telegram_app.process_update(update),
+        telegram_app.loop,
+    )
     return "ok"
-    
+
+# ===============================
+# 🚀 Запуск
+# ===============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
 
-    async def main():
-        print(f"🚀 Запуск бота на {WEBHOOK_URL}")
-
+    async def run_bot():
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
         await telegram_app.initialize()
+        await telegram_app.start()
         await telegram_app.bot.set_webhook(WEBHOOK_URL)
+        print(f"🚀 Webhook установлен: {WEBHOOK_URL}")
 
-        # ⚙️ Запускаем обработку апдейтов вручную
-        async def process_updates():
-            while True:
-                update = await telegram_app.update_queue.get()
-                await telegram_app.process_update(update)
+        # держим бота живым
+        await telegram_app.updater.start_polling()
 
-        asyncio.create_task(process_updates())
-
-        # 🚀 Запускаем Flask
+    def run_flask():
         app.run(host="0.0.0.0", port=port)
 
-    asyncio.run(main())
+    # Flask в отдельном потоке
+    threading.Thread(target=run_flask).start()
+
+    asyncio.run(run_bot())
