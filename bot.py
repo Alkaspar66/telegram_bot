@@ -1,33 +1,27 @@
 import os
 import csv
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ===============================
-# 🔧 Настройки
-# ===============================
 TOKEN = os.getenv("TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
-PORT = int(os.environ.get("PORT", 10000))
-WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}/webhook"
-
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Telegram ID администратора (опционально)
+WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
 CSV_FILE = "applications.csv"
+
+app = Flask(__name__)
+telegram_app = Application.builder().token(TOKEN).build()
+
 user_states = {}
 
-# ===============================
-# 🤖 Логика бота
-# ===============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     user_states[user_id] = {"step": "ask_name"}
     await update.message.reply_text("👋 Привет! Как вас зовут?")
-    print(f"🆕 /start от {user_id}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip()
-    print(f"📩 Сообщение от {user_id}: {text}")
 
     if user_id not in user_states:
         await update.message.reply_text("Введите /start чтобы начать запись 🙂")
@@ -45,8 +39,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state["phone"] = text
         name, phone = state["name"], state["phone"]
 
-        save_to_csv(name, phone)
+        # Сохраняем в CSV
+        new_file = not os.path.exists(CSV_FILE)
+        with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow(["Имя", "Телефон"])
+            writer.writerow([name, phone])
 
+        # Отправка админу
         if ADMIN_CHAT_ID:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
@@ -56,27 +57,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Спасибо! Ваша заявка принята.")
         user_states.pop(user_id, None)
 
-def save_to_csv(name: str, phone: str):
-    new_file = not os.path.exists(CSV_FILE)
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if new_file:
-            writer.writerow(["Имя", "Телефон"])
-        writer.writerow([name, phone])
-    print(f"💾 Сохранено: {name}, {phone}")
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, telegram_app.bot)
+    telegram_app.update_queue.put_nowait(update)
+    return "ok"
 
-# ===============================
-# 🚀 Запуск бота с webhook
-# ===============================
 if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    port = int(os.environ.get("PORT", 10000))
 
-    print(f"🚀 Бот запускается, webhook: {WEBHOOK_URL}")
-    # ⚠️ Важно: webhook_path убран
-    app.run_webhook(
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Установка webhook
+    telegram_app.run_webhook(
         listen="0.0.0.0",
-        port=PORT,
+        port=port,
         webhook_url=WEBHOOK_URL
     )
