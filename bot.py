@@ -1,7 +1,6 @@
 import os
 import csv
 import asyncio
-import threading
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import (
@@ -76,11 +75,9 @@ def save_to_csv(name: str, phone: str):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
-    print("📩 Webhook получил апдейт:", data)
     update = Update.de_json(data, telegram_app.bot)
-
-    # В новой версии telegram_app.loop больше нет — вызываем напрямую
-    asyncio.run(telegram_app.process_update(update))
+    # ⚡️ Асинхронно ставим обработку апдейта в очередь Telegram, не блокируя Flask
+    asyncio.create_task(telegram_app.process_update(update))
     return "ok"
 
 @app.route("/")
@@ -88,7 +85,7 @@ def home():
     return "Bot is alive ✅", 200
 
 # ===============================
-# 🚀 Запуск
+# 🚀 Запуск Telegram и Flask
 # ===============================
 async def run_bot():
     telegram_app.add_handler(CommandHandler("start", start))
@@ -104,5 +101,6 @@ def start_flask():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: asyncio.run(run_bot())).start()
+    # ⚡️ Запускаем Telegram в фоне, Flask в основном потоке
+    asyncio.get_event_loop().create_task(run_bot())
     start_flask()
