@@ -1,7 +1,8 @@
 import os
 import csv
 import asyncio
-import threading
+import logging
+from threading import Thread
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import (
@@ -19,18 +20,38 @@ TOKEN = os.getenv("TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
 
-app = Flask(__name__)
-telegram_app = Application.builder().token(TOKEN).build()
 CSV_FILE = "applications.csv"
-user_states = {}
 
 # ===============================
-# 🤖 Логика бота
+# ⚙️ Логирование
+# ===============================
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# ===============================
+# Flask
+# ===============================
+app = Flask(__name__)
+
+# ===============================
+# Telegram
+# ===============================
+telegram_app = Application.builder().token(TOKEN).concurrent_updates(10).build()
+user_states = {}
+telegram_loop = None  # будет хранить loop для run_coroutine_threadsafe
+
+# ===============================
+# Логика бота
 # ===============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     user_states[user_id] = {"step": "ask_name"}
-    await update.message.reply_text("👋 Привет! Как вас зовут?")
+    try:
+        await update.message.reply_text("👋 Привет! Как вас зовут?")
+    except Exception as e:
+        logging.error("Ошибка при отправке сообщения: %s", e)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
@@ -54,57 +75,74 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_to_csv(name, phone)
 
         if ADMIN_CHAT_ID:
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"🆕 Новая заявка!\nИмя: {name}\nТелефон: {phone}",
-            )
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=f"🆕 Новая заявка!\nИмя: {name}\nТелефон: {phone}",
+                )
+            except Exception as e:
+                logging.error("Ошибка при отправке админу: %s", e)
 
         await update.message.reply_text("✅ Спасибо! Ваша заявка принята.")
         user_states.pop(user_id, None)
 
+# ===============================
+# CSV
+# ===============================
 def save_to_csv(name: str, phone: str):
-    new_file = not os.path.exists(CSV_FILE)
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if new_file:
-            writer.writerow(["Имя", "Телефон"])
-        writer.writerow([name, phone])
+    try:
+        new_file = not os.path.exists(CSV_FILE)
+        with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow(["Имя", "Телефон"])
+            writer.writerow([name, phone])
+    except Exception as e:
+        logging.error("Ошибка записи CSV: %s", e)
 
 # ===============================
-# 🌐 Flask Webhook
+# Flask webhook
 # ===============================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, telegram_app.bot)
-    # Асинхронно ставим обработку апдейта в очередь Telegram
-    asyncio.create_task(telegram_app.process_update(update))
+    try:
+        asyncio.run_coroutine_threadsafe(telegram_app.process_update(update), telegram_loop)
+    except Exception as e:
+        logging.error("Ошибка при обработке webhook: %s", e)
     return "ok"
 
-@app.route("/")
-def home():
-    return "Bot is alive ✅", 200
+# ===============================
+# Фоновый поток для Telegram
+# ===============================
+def start_telegram():
+    global telegram_loop
+
+    async def run():
+        global telegram_loop
+        telegram_loop = asyncio.get_running_loop()
+
+        # добавляем обработчики
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+        await telegram_app.initialize()
+        await telegram_app.bot.set_webhook(WEBHOOK_URL)
+        logging.info("🚀 Telegram бот запущен, webhook установлен: %s", WEBHOOK_URL)
+
+        await telegram_app.start()
+        await telegram_app.updater.start_polling()  # безопасный старт loop
+
+    asyncio.run(run())
 
 # ===============================
-# 🚀 Запуск Telegram и Flask
+# Запуск Flask + Telegram
 # ===============================
-async def run_bot():
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.bot.set_webhook(WEBHOOK_URL)
-    print(f"🚀 Webhook установлен: {WEBHOOK_URL}")
-
 if __name__ == "__main__":
-    # Запускаем Telegram в отдельном потоке
-    def telegram_thread():
-        asyncio.run(run_bot())
+    # запускаем Telegram в отдельном потоке
+    Thread(target=start_telegram, daemon=True).start()
 
-    t = threading.Thread(target=telegram_thread)
-    t.start()
-
-    # Flask работает в основном потоке
     port = int(os.environ.get("PORT", 10000))
+    logging.info("🚀 Flask сервер запускается на порту %s", port)
     app.run(host="0.0.0.0", port=port)
