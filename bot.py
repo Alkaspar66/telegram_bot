@@ -76,9 +76,18 @@ def save_to_csv(name: str, phone: str):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
+    print("📩 Webhook получил апдейт:", data)
+
     update = Update.de_json(data, telegram_app.bot)
-    telegram_app.update_queue.put_nowait(update)
+    try:
+        telegram_app.update_queue.put_nowait(update)
+    except Exception as e:
+        print("⚠️ Ошибка при добавлении update в очередь:", e)
     return "ok"
+    
+   # update = Update.de_json(data, telegram_app.bot)
+   # telegram_app.update_queue.put_nowait(update)
+   # return "ok"
 
 # ===============================
 # 🚀 Запуск
