@@ -12,6 +12,9 @@ from telegram.ext import (
     filters,
 )
 
+# ===============================
+# 🔧 Настройки
+# ===============================
 TOKEN = os.getenv("TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
@@ -76,11 +79,8 @@ def webhook():
     print("📩 Webhook получил апдейт:", data)
     update = Update.de_json(data, telegram_app.bot)
 
-    # безопасно передаем в loop телеграма
-    asyncio.run_coroutine_threadsafe(
-        telegram_app.process_update(update),
-        telegram_app.loop,
-    )
+    # В новой версии telegram_app.loop больше нет — вызываем напрямую
+    asyncio.run(telegram_app.process_update(update))
     return "ok"
 
 @app.route("/")
@@ -104,7 +104,5 @@ def start_flask():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    # запускаем Telegram в отдельном потоке
     threading.Thread(target=lambda: asyncio.run(run_bot())).start()
-    # Flask — в основном потоке (Render будет держать этот процесс)
     start_flask()
