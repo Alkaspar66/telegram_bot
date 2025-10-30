@@ -7,11 +7,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 # 🔧 Настройки
 # ===============================
 TOKEN = os.getenv("TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))  # свой Telegram ID
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 PORT = int(os.environ.get("PORT", 10000))
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}"
+WEBHOOK_URL = f"https://{WEBHOOK_HOST}/webhook"
 
 CSV_FILE = "applications.csv"
 user_states = {}
@@ -46,10 +45,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state["phone"] = text
         name, phone = state["name"], state["phone"]
 
-        # сохраняем в CSV
         save_to_csv(name, phone)
 
-        # уведомляем админа
         if ADMIN_CHAT_ID:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
@@ -77,10 +74,9 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print(f"🚀 Бот запускается, webhook: {WEBHOOK_URL}")
+    # ⚠️ Важно: webhook_path убран
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_path=WEBHOOK_PATH,
-        url_path=WEBHOOK_PATH,
         webhook_url=WEBHOOK_URL
     )
