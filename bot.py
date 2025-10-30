@@ -15,19 +15,18 @@ from telegram.ext import (
 # 🔧 Настройки
 # ===============================
 TOKEN = os.getenv("TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # свой Telegram ID (необязательно)
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # можно не задавать
 WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
 
 app = Flask(__name__)
 telegram_app = Application.builder().token(TOKEN).build()
 
-# Путь к CSV (сохраняется в рабочей директории Render)
+# 📁 CSV-файл сохраняется в той же директории, где запущен бот
 CSV_FILE = "applications.csv"
 
 # ===============================
 # 🤖 Логика бота
 # ===============================
-
 user_states = {}  # хранит этап диалога для каждого пользователя
 
 
@@ -41,7 +40,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     text = update.message.text.strip()
 
-    # если пользователь новый
     if user_id not in user_states:
         await update.message.reply_text("Введите /start чтобы начать запись 🙂")
         return
@@ -60,10 +58,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state["phone"] = text
         name, phone = state["name"], state["phone"]
 
-        # сохраняем в CSV
         save_to_csv(name, phone)
 
-        # уведомляем админа
+        # уведомляем админа (если указан)
         if ADMIN_CHAT_ID:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
@@ -72,10 +69,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("✅ Спасибо! Ваша заявка принята.")
         user_states.pop(user_id, None)
-        return
 
 
 def save_to_csv(name: str, phone: str):
+    """Создаёт или дописывает CSV в рабочей папке."""
     new_file = not os.path.exists(CSV_FILE)
     with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -83,6 +80,12 @@ def save_to_csv(name: str, phone: str):
             writer.writerow(["Имя", "Телефон"])
         writer.writerow([name, phone])
 
+
+# ===============================
+# 🧩 Подключение хендлеров
+# ===============================
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # ===============================
 # 🌐 Flask Webhook
